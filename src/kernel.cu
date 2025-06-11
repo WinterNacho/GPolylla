@@ -210,7 +210,7 @@ __global__ void seed_phase_d(halfEdge *HalfEdges, bit_vector_d *max_edges, half 
     if (off < n){
         //seed_edges[off] = 0;
         if(is_interior_face_d(HalfEdges, off) && is_seed_edge_d(HalfEdges, max_edges, off))
-            seed_edges[off] = 1;
+            seed_edges[off] = __float2half(1.0f);
         }
 }
 
@@ -312,7 +312,8 @@ static __device__ T zero() {
 
 #include <cuda.h>
 #include <mma.h>
-#include <cub/cub.cuh> 
+#include <cuda_fp16.h>
+#include <cub/cub.cuh>
 using namespace nvcuda;
 static const int M              = 16;
 static const int N              = 16;
@@ -537,8 +538,8 @@ __global__ void label_extra_frontier_edge_d(halfEdge *HalfEdges, bit_vector_d *f
             frontier_edges[t1] = 1;
             frontier_edges[t2] = 1;
 
-            seed_edges[t1] = 1;
-            seed_edges[t2] = 1;
+            seed_edges[t1] = __float2half(1.0f);
+            seed_edges[t2] = __float2half(1.0f);
         }
     }  
 }
@@ -571,7 +572,7 @@ __global__ void search_frontier_edge_d(halfEdge *HalfEdges, bit_vector_d *fronti
 {
     int off = threadIdx.x + blockIdx.x*blockDim.x;
     if (off < n){
-        if(seed_edges[off] == __float2half(1.0f)){
+        if(__half2float(seed_edges[off]) == 1.0f){
             int nxt = off;
             //printf("%i %f\n",off,__half2float(seed_edges[off]));
             while(!frontier_edges[nxt])
@@ -579,8 +580,8 @@ __global__ void search_frontier_edge_d(halfEdge *HalfEdges, bit_vector_d *fronti
                 nxt = CW_edge_to_vertex_d(HalfEdges, nxt);
             }  
             if(nxt != off)
-                seed_edges[off] = 0;
-            seed_edges[nxt] = 1;
+                seed_edges[off] = __float2half(0.0f);
+            seed_edges[nxt] = __float2half(1.0f);
             //printf("%i %i\n",off,nxt);
         }
     }
@@ -614,7 +615,7 @@ __global__ void overwrite_seed_d(halfEdge *HalfEdges, int *seed_edges, int n){
 __global__ void overwrite_seed_d(halfEdge *HalfEdges, half *seed_edges, int n){
     int i = threadIdx.x + blockIdx.x * blockDim.x; 
     if (i < n){        
-        if(seed_edges[i] == __float2half(1.0f)){
+        if(__half2float(seed_edges[i]) == 1.0f){
             int e_init = i;
             int min_ind = e_init;
             int e_curr = next_d(HalfEdges, e_init);
@@ -625,9 +626,9 @@ __global__ void overwrite_seed_d(halfEdge *HalfEdges, half *seed_edges, int n){
             //printf("overwrite_seed_d %i %i %i\n", i ,e_init,min_ind);
             
             if(min_ind != i){
-                seed_edges[i] = 0;
+                seed_edges[i] = __float2half(0.0f);
             }
-            seed_edges[min_ind] = 1;
+            seed_edges[min_ind] = __float2half(1.0f);
         }
     }  
 }

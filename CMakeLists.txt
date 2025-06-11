@@ -3,6 +3,8 @@ project(cmake_cuda LANGUAGES CUDA)
 
 project(GPolylla)
 
+set(CMAKE_CUDA_ARCHITECTURES 70)
+
 add_subdirectory(external src)
 include_directories(external src)
 
