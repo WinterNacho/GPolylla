@@ -50,6 +50,9 @@ private:
     
     bit_vector seed_bet_mark;
 
+    // Region options
+    bool use_regions = false;
+
     //Statistics
     int m_polygons = 0; //Number of polygons
     int n_frontier_edges = 0; //Number of frontier edges
@@ -98,15 +101,17 @@ public:
     }
 
     //Constructor from a OFF file
-    Polylla(std::string off_file){
-        this->mesh_input = new Triangulation(off_file);
+    Polylla(std::string off_file, bool use_regions = false){
+        this->use_regions = use_regions;
+        this->mesh_input = new Triangulation(off_file, use_regions);
         mesh_output = new Triangulation(*mesh_input);
         construct_Polylla();
     }
 
     //Constructor from a node_file, ele_file and neigh_file
-    Polylla(std::string node_file, std::string ele_file, std::string neigh_file){
-        this->mesh_input = new Triangulation(node_file, ele_file, neigh_file);
+    Polylla(std::string node_file, std::string ele_file, std::string neigh_file, bool use_regions = false){
+        this->use_regions = use_regions;
+        this->mesh_input = new Triangulation(node_file, ele_file, neigh_file, use_regions);
         //call copy constructor
         mesh_output = new Triangulation(*mesh_input);
         construct_Polylla();
@@ -196,7 +201,18 @@ public:
         
         gpuErrchk( cudaDeviceSynchronize() );
         t_start = std::chrono::high_resolution_clock::now();
-        label_phase<<<(n_halfedges + BSIZE - 1)/BSIZE, BSIZE>>>(halfedges_d, max_edges_d, frontier_edges_d, n_halfedges); 
+        
+        // Prepare region data for GPU if using regions
+        int *triangle_regions_d = nullptr;
+        int num_regions = 0;
+        if (use_regions && mesh_input->triangle_regions.size() > 0) {
+            num_regions = mesh_input->triangle_regions.size();
+            cudaMalloc(&triangle_regions_d, num_regions * sizeof(int));
+            cudaMemcpy(triangle_regions_d, mesh_input->triangle_regions.data(), num_regions * sizeof(int), cudaMemcpyHostToDevice);
+        }
+        
+        label_phase<<<(n_halfedges + BSIZE - 1)/BSIZE, BSIZE>>>(halfedges_d, max_edges_d, frontier_edges_d, n_halfedges, 
+                                                              triangle_regions_d, num_regions, use_regions); 
         cudaDeviceSynchronize();
         
         t_end = std::chrono::high_resolution_clock::now();
@@ -225,7 +241,8 @@ public:
         gpuErrchk( cudaDeviceSynchronize() );
         t_start = std::chrono::high_resolution_clock::now();
 
-        seed_phase_d<<<(n_halfedges + BSIZE - 1)/BSIZE, BSIZE>>>(halfedges_d, max_edges_d, seed_edges_ad, n_halfedges); 
+        seed_phase_d<<<(n_halfedges + BSIZE - 1)/BSIZE, BSIZE>>>(halfedges_d, max_edges_d, seed_edges_ad, n_halfedges,
+                                                             triangle_regions_d, num_regions, use_regions); 
         gpuErrchk( cudaDeviceSynchronize() );
 
         t_end = std::chrono::high_resolution_clock::now();
@@ -406,6 +423,11 @@ public:
         //mesh_input->print_pg(std::to_string(mesh_input->vertices()) + ".pg");    
 
 
+        // Free GPU memory
+        if (triangle_regions_d != nullptr) {
+            cudaFree(triangle_regions_d);
+        }
+        
         // cudaFree(max_edges_d);
         // cudaFree(frontier_edges_d);
         // cudaFree(seed_edges_d);
@@ -536,6 +558,19 @@ public:
             while(e_init != e_curr){
                 out<<mesh_output->origin(e_curr)<<" ";
                 e_curr = mesh_output->next(e_curr);
+            }
+            
+            // Add colors only if using regions
+            if (use_regions) {
+                // Get region from the original mesh (via first halfedge)
+                int region = mesh_input->region_face(mesh_input->index_face(e_init));
+
+                // Generate different RGB colors using prime numbers based on the region
+                float r = (region * 73 % 256) / 255.0f;
+                float g = (region * 149 % 256) / 255.0f;
+                float b = (region * 233 % 256) / 255.0f;
+
+                out << " " << r << " " << g << " " << b << " 1.0";
             }
             out<<std::endl; 
             //count++;

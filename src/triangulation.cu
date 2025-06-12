@@ -98,7 +98,8 @@ public:
     std::vector<vertex> Vertices;
     std::vector<halfEdge> HalfEdges; //list of edges
     //std::vector<char> triangle_flags; //list of edges that generate a unique triangles, 
-    std::vector<int> triangle_list; //list of edges that generate a unique triangles, 
+    std::vector<int> triangle_list; //list of edges that generate a unique triangles,
+    std::vector<int> triangle_regions; //list of the region of each triangle
     
 
 
@@ -131,26 +132,44 @@ public:
     }
 
     //Read triangle file in .ele format and stores it in faces vector
-    std::vector<int> read_triangles_from_file(std::string name){
+    std::vector<int> read_triangles_from_file(std::string name, bool read_regions = false){
         std::vector<int> faces;
         std::string line;
         std::ifstream elefile(name);
-        int a1, a2, a3, a4;
         
         //std::cout<<"Node file"<<std::endl;
-        if (elefile.is_open())
-        {
-            elefile >> n_faces;
-            //std::cout<<pnumber<<std::endl;
+        if (elefile.is_open()) {
+            int nodes_per_triangle, has_attributes;
+            elefile >> n_faces >> nodes_per_triangle >> has_attributes; // Assuming the attribute is region always
             faces.reserve(3*n_faces);
+            
+            // Safety check: if regions are requested but file has no attributes
+            if (read_regions && has_attributes == 0) {
+                std::cout << "Warning: Region processing requested but no attributes found in .ele file" << std::endl;
+                std::cout << "Regions will be ignored for this mesh" << std::endl;
+            }
+            
+            if (has_attributes > 0 && read_regions) {
+                triangle_regions.reserve(n_faces);
+            }
+            
             std::getline(elefile, line); //skip the first line
-            while (std::getline(elefile, line))
-            {
-                std::istringstream(line) >> a1 >> a2 >> a3 >> a4;
-                faces.push_back(a2);
-                faces.push_back(a3);
-                faces.push_back(a4);
-                //std::cout<<"Vertex "<<a1<<" "<<v.x<<" "<<v.y<<" "<<v.is_border<<std::endl;
+            while (std::getline(elefile, line)) {
+                if (line[0] != '#') {
+                    std::istringstream iss(line);
+                    int triangle_id, v1, v2, v3;
+                    iss >> triangle_id >> v1 >> v2 >> v3;
+                    
+                    faces.push_back(v1);
+                    faces.push_back(v2);
+                    faces.push_back(v3);
+                    
+                    if (has_attributes > 0 && read_regions) {
+                        int region;
+                        iss >> region;
+                        triangle_regions.push_back(region);
+                    }
+                }
             }
         }
         else 
@@ -420,14 +439,14 @@ public:
     Triangulation() {}
 
     //Constructor from file
-    Triangulation(std::string node_file, std::string ele_file, std::string neigh_file) {
+    Triangulation(std::string node_file, std::string ele_file, std::string neigh_file, bool use_regions = false) {
         std::vector<int> faces;
         std::vector<int> neighs;
         std::cout<<"Reading node file"<<std::endl;
         read_nodes_from_file(node_file);
         //fusionar estos dos métodos
         std::cout<<"Reading ele file"<<std::endl;
-        faces = read_triangles_from_file(ele_file);
+        faces = read_triangles_from_file(ele_file, use_regions);
         std::cout<<"Reading neigh file"<<std::endl;
         neighs = read_neigh_from_file(neigh_file);
 
@@ -444,7 +463,7 @@ public:
         t_triangulation_generation = std::chrono::duration<double, std::milli>(t_end-t_start).count();
     }
 
-    Triangulation(std::string OFF_file){
+    Triangulation(std::string OFF_file, bool use_regions = false){
         std::cout<<"Reading OFF file "<<OFF_file<<std::endl;
         std::vector<int> faces = read_OFFfile(OFF_file);
 
@@ -523,6 +542,7 @@ public:
         this->n_halfedges = t.n_halfedges;
         this->Vertices = t.Vertices;
         this->HalfEdges = t.HalfEdges;
+        this->triangle_regions = t.triangle_regions;
         this-> t_triangulation_generation = t.t_triangulation_generation;
     }
 
@@ -748,6 +768,16 @@ public:
     int incident_halfedge(int f)
     {
         return 3*f;
+    }
+
+    int index_face(int e) {
+        return e / 3;
+    }
+
+    int region_face(int f) {
+        if(triangle_regions.size() > 0 && f < triangle_regions.size())
+            return triangle_regions.at(f);
+        return 0; // default region
     }
 };
 

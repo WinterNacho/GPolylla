@@ -66,6 +66,18 @@ __device__ int CCW_edge_to_vertex_d(halfEdge *HalfEdges, int e)
     return twn;
 }    
 
+// Get the index of the face incident to halfedge e
+__device__ int index_face_d(int e) {
+    return e / 3;
+}
+
+// Get the region of face f
+__device__ int region_face_d(int *triangle_regions, int f, int num_regions) {
+    if(triangle_regions != nullptr && f < num_regions)
+        return triangle_regions[f];
+    return 0; // default region
+}
+
 
 
 
@@ -153,22 +165,34 @@ __device__ int compute_max_edge_d(halfEdge *HalfEdges, vertex *Vertices, int e){
 
 }
 
-__device__ bool is_frontier_edge_d(halfEdge *halfedges, bit_vector_d *max_edges, const int e)
+__device__ bool is_frontier_edge_d(halfEdge *halfedges, bit_vector_d *max_edges, const int e, 
+                                   int *triangle_regions = nullptr, int num_regions = 0, bool use_regions = false)
 {
     int twin = twin_d(halfedges, e);
     bool is_border_edge = is_border_face_d(halfedges, e) || is_border_face_d(halfedges, twin);
     bool is_not_max_edge = !(max_edges[e] || max_edges[twin]);
-    if(is_border_edge || is_not_max_edge)
+    
+    bool is_region_boundary = false;
+    if (use_regions && triangle_regions != nullptr) {
+        int face1 = index_face_d(e);
+        int face2 = index_face_d(twin);
+        int region1 = region_face_d(triangle_regions, face1, num_regions);
+        int region2 = region_face_d(triangle_regions, face2, num_regions);
+        is_region_boundary = (region1 != region2);
+    }
+    
+    if(is_border_edge || is_not_max_edge || is_region_boundary)
         return 1;
     else
         return 0;
 }
 
-__global__ void label_phase(halfEdge *halfedges, bit_vector_d *max_edges, bit_vector_d *frontier_edges, int n){
+__global__ void label_phase(halfEdge *halfedges, bit_vector_d *max_edges, bit_vector_d *frontier_edges, int n,
+                           int *triangle_regions = nullptr, int num_regions = 0, bool use_regions = false){
     int off = threadIdx.x + blockDim.x*blockIdx.x;
     if (off < n){
         frontier_edges[off] = 0;
-        if(is_frontier_edge_d(halfedges, max_edges, off))
+        if(is_frontier_edge_d(halfedges, max_edges, off, triangle_regions, num_regions, use_regions))
             frontier_edges[off] = 1;
         //printf("off: %i, frontier_edges: %i\n", off, frontier_edges[off]);
     }
@@ -189,27 +213,39 @@ __global__ void label_edges_max_d(bit_vector_d *output, vertex *Vertices, halfEd
     }
 }
 
-__device__ bool is_seed_edge_d(halfEdge *HalfEdges, bit_vector_d *max_edges, int e){
+__device__ bool is_seed_edge_d(halfEdge *HalfEdges, bit_vector_d *max_edges, int e,
+                               int *triangle_regions = nullptr, int num_regions = 0, bool use_regions = false){
     int twin = twin_d(HalfEdges, e);
 
     bool is_terminal_edge = (is_interior_face_d(HalfEdges, twin) &&  (max_edges[e] && max_edges[twin]) );
     bool is_terminal_border_edge = (is_border_face_d(HalfEdges, twin) && max_edges[e]);
+    
+    bool is_terminal_region_edge = false;
+    if (use_regions && triangle_regions != nullptr) {
+        int face1 = index_face_d(e);
+        int face2 = index_face_d(twin);
+        int region1 = region_face_d(triangle_regions, face1, num_regions);
+        int region2 = region_face_d(triangle_regions, face2, num_regions);
+        bool is_region_boundary = (region1 != region2);
+        is_terminal_region_edge = (is_region_boundary && max_edges[e]);
+    }
 
-    if( (is_terminal_edge && e < twin ) || is_terminal_border_edge){
+    if( (is_terminal_edge && e < twin ) || is_terminal_border_edge || is_terminal_region_edge){
         return true;
     }
 
     return false;
 }
 
-__global__ void seed_phase_d(halfEdge *HalfEdges, bit_vector_d *max_edges, half *seed_edges, int n){
+__global__ void seed_phase_d(halfEdge *HalfEdges, bit_vector_d *max_edges, half *seed_edges, int n,
+                             int *triangle_regions = nullptr, int num_regions = 0, bool use_regions = false){
     int x = threadIdx.x + blockIdx.x * blockDim.x; 
     // Calculate the row index of the Pd element, denote by y
     int y = threadIdx.y + blockIdx.y * blockDim.y;
     int off = x + y * blockDim.x * gridDim.x;
     if (off < n){
         //seed_edges[off] = 0;
-        if(is_interior_face_d(HalfEdges, off) && is_seed_edge_d(HalfEdges, max_edges, off))
+        if(is_interior_face_d(HalfEdges, off) && is_seed_edge_d(HalfEdges, max_edges, off, triangle_regions, num_regions, use_regions))
             seed_edges[off] = __float2half(1.0f);
         }
 }
